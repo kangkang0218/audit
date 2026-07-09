@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>投标文件三项审查</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='12' fill='%23245b9f'/><text x='32' y='43' text-anchor='middle' font-size='34' fill='white'>审</text></svg>" />
+    <link rel="stylesheet" href="/frontend/styles.css?v=20260709-3" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="topbar" aria-label="页面标题">
+        <div>
+          <p class="eyebrow">投标文件三项审查专用工具</p>
+          <h1>投标文件三项审查</h1>
+          <span class="app-version">页面版本 20260706-1</span>
+        </div>
+        <div class="topbar-actions">
+          <button class="icon-button" id="resetButton" title="重置页面" aria-label="重置页面">
+            <span aria-hidden="true">↺</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <aside class="panel upload-panel" aria-label="上传与参数">
+          <div class="panel-heading">
+            <h2>输入文件</h2>
+            <span class="status-pill neutral" id="modePill">等待文件</span>
+          </div>
+
+          <label class="dropzone" id="dropzone">
+            <input id="fileInput" type="file" accept="application/pdf,.pdf" />
+            <span class="drop-icon" aria-hidden="true">⇧</span>
+            <strong>选择或拖入 PDF</strong>
+            <small>示例：中和刚大工程顾问有限公司(1).pdf</small>
+          </label>
+
+          <div class="file-card" id="fileCard" hidden>
+            <div>
+              <span class="file-type">PDF</span>
+              <strong id="fileName">未选择文件</strong>
+            </div>
+            <dl>
+              <div>
+                <dt>大小</dt>
+                <dd id="fileSize">-</dd>
+              </div>
+              <div>
+                <dt>实际页数</dt>
+                <dd id="pageCount">-</dd>
+              </div>
+            </dl>
+          </div>
+
+          <fieldset class="checkset">
+            <legend>审查范围</legend>
+            <label><input type="checkbox" checked disabled /> 问题1：流程、保证金、评分、公示</label>
+            <label><input type="checkbox" checked disabled /> 问题2：文件一致性、报价规律、综合单价</label>
+            <label><input type="checkbox" checked disabled /> 问题3：人员社保缴纳与风险线索</label>
+          </fieldset>
+
+          <button class="primary-button" id="runButton" disabled>
+            <span class="button-icon" aria-hidden="true">▶</span>
+            开始审查
+          </button>
+        </aside>
+
+        <section class="panel run-panel" aria-label="处理进度">
+          <div class="panel-heading">
+            <h2>执行状态</h2>
+            <span class="status-pill neutral" id="runState">待开始</span>
+          </div>
+
+          <div class="processing-visual" aria-hidden="true">
+            <div class="orbit">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+            <div class="pulse-stack">
+              <i></i>
+              <i></i>
+              <i></i>
+              <i></i>
+            </div>
+          </div>
+
+          <div class="progress-block">
+            <div class="progress-top">
+              <span id="progressLabel">等待 PDF 文件</span>
+              <strong id="progressPercent">0%</strong>
+            </div>
+            <div class="progress-track">
+              <div id="progressBar"></div>
+            </div>
+            <div class="timer-line" id="timerLine" style="display:none">
+              ⏱ <span id="timerElapsed">00:00</span>
+            </div>
+          </div>
+
+          <ol class="steps" id="steps">
+            <li data-step="upload">接收 PDF</li>
+            <li data-step="parse">解析分页文本与版面线索</li>
+            <li data-step="chunk">按目录与章节分块</li>
+            <li data-step="extract">提取审查信息</li>
+            <li data-step="validate">校验固定 Schema</li>
+            <li data-step="excel">生成审查 Excel</li>
+          </ol>
+
+          <section class="thinking-panel" aria-label="处理摘要">
+            <div class="panel-heading compact">
+              <h3>处理摘要</h3>
+              <span id="logCount">0 条</span>
+            </div>
+            <div class="log-list" id="logList">
+              <p class="empty">运行后这里会显示阶段性处理摘要。</p>
+            </div>
+          </section>
+        </section>
+
+        <aside class="panel result-panel" aria-label="输出结果">
+          <div class="panel-heading">
+            <h2>输出结果</h2>
+            <span class="status-pill neutral" id="resultState">未生成</span>
+          </div>
+
+          <div class="result-box" id="resultBox">
+            <div class="result-icon" aria-hidden="true">XLSX</div>
+            <strong id="resultName">等待生成审查工作簿</strong>
+            <p id="resultHint">输出文件会按固定 sheet 与表头生成，并对异常、模糊、需人工复核内容做红色标注。</p>
+            <a class="download-button disabled" id="downloadLink" href="#" aria-disabled="true">
+              <span aria-hidden="true">⇩</span>
+              下载 Excel
+            </a>
+          </div>
+
+          <section class="schema-preview">
+            <h3>工作簿结构</h3>
+            <ul>
+              <li>概览</li>
+              <li>基础事实提取</li>
+              <li>无法提取原因</li>
+              <li>判断建议</li>
+              <li>人员社保提取</li>
+              <li>判断依据范围</li>
+              <li>需补充材料清单</li>
+            </ul>
+          </section>
+
+        </aside>
+      </section>
+    </main>
+
+    <script src="/frontend/app.js?v=20260709-7"></script>
+  </body>
+</html>

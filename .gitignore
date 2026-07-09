@@ -1,0 +1,12 @@
+.env
+*.pyc
+__pycache__/
+zzsj619/
+outputs/
+*.xlsx
+*.pdf
+*.zip
+*.pkl
+*.bin
+mineru/
+/pipeline/prompts/

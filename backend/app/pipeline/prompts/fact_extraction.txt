@@ -1,0 +1,31 @@
+你是投标文件三项审查专家。从以下 Markdown 章节提取所有关键事实。
+
+输出严格 JSON：
+
+{
+  "facts": [{
+    "field_name": "从文档提取",
+    "value": "从文档提取",
+    "source_excerpt": "从文档提取",
+    "confidence": 0.0
+  }],
+  "personnel": [{
+    "name": "从文档提取",
+    "role": "从文档提取",
+    "title": "从文档提取",
+    "certificate_name": "从文档提取",
+    "certificate_level": "从文档提取",
+    "certificate_numbers": ["从文档提取"],
+    "specialty": "从文档提取",
+    "social_security_id_masked": "从文档提取"
+  }]
+}
+
+铁律——违反任一条则输出无效：
+1. 所有值必须从文档原文逐字提取，禁止编造、推测、补全
+2. 找不到该字段时，不要输出该字段，也不要用占位符
+3. 找不到任何人员信息时，personnel 输出空数组 []
+4. 禁止输出示例值、模板值、占位名（如"张三""李四""人员姓名""证号1"）
+5. source_excerpt 必须是从文档原文中复制的真实片段
+
+章节内容：{content}
