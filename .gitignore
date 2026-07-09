@@ -10,3 +10,4 @@ outputs/
 *.bin
 mineru/
 /pipeline/prompts/
+mineru_outputs/
