@@ -67,6 +67,9 @@ def start_review(input_path: Path, output_dir: Path, settings: Settings | None =
                         r["label"] = label
                         if "progress" in data:
                             r["progress"] = data["progress"]
+                        if "completed" in data and "total" in data:
+                            r["llm_completed"] = data["completed"]
+                            r["llm_total"] = data["total"]
         except Exception as exc:
             with _lock:
                 r = _runs.get(run_id)

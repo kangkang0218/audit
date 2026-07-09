@@ -1,31 +1,91 @@
 你是投标文件三项审查专家。从以下 Markdown 章节提取所有关键事实。
 
-输出严格 JSON：
+输出严格 JSON，分为三个区块：facts（基础事实）、personnel（人员社保）、tables（表格）。
 
 {
-  "facts": [{
-    "field_name": "从文档提取",
-    "value": "从文档提取",
-    "source_excerpt": "从文档提取",
-    "confidence": 0.0
-  }],
-  "personnel": [{
-    "name": "从文档提取",
-    "role": "从文档提取",
-    "title": "从文档提取",
-    "certificate_name": "从文档提取",
-    "certificate_level": "从文档提取",
-    "certificate_numbers": ["从文档提取"],
-    "specialty": "从文档提取",
-    "social_security_id_masked": "从文档提取"
-  }]
+  "facts": [
+    {
+      "field_name": "字段名",
+      "value": "从文档提取的真实值",
+      "source_excerpt": "原文佐证片段（30字以内）",
+      "confidence": 0.95
+    }
+  ],
+  "personnel": [
+    {
+      "name": "人员姓名",
+      "role": "职务角色",
+      "title": "职称",
+      "certificate_name": "证书名称",
+      "certificate_level": "证书级别",
+      "certificate_numbers": ["证号"],
+      "specialty": "专业",
+      "social_security_id_masked": "社保编号",
+      "labor_contract_found": true
+    }
+  ],
+  "tables": [
+    {
+      "table_type": "personnel_table/pricing_table/guarantee_table/social_security_table",
+      "row_count": 5,
+      "col_count": 8,
+      "preview": "前3行内容摘要",
+      "confidence": 0.9,
+      "note": "备注"
+    }
+  ]
 }
 
-铁律——违反任一条则输出无效：
-1. 所有值必须从文档原文逐字提取，禁止编造、推测、补全
-2. 找不到该字段时，不要输出该字段，也不要用占位符
-3. 找不到任何人员信息时，personnel 输出空数组 []
-4. 禁止输出示例值、模板值、占位名（如"张三""李四""人员姓名""证号1"）
-5. source_excerpt 必须是从文档原文中复制的真实片段
+──── 第一层：基础事实（28项，按类别提取）────
+
+【基础信息】项目名称、招标人名称、投标人名称、投标文件日期
+
+【报价】投标报价、投标函报价、投标函附录报价、基本费率折扣系数、审减费率折扣系数、增值税税率
+
+【响应信息】投标有效期、服务期限
+
+【人员】项目负责人（姓名）、项目负责人注册编号、项目负责人专业
+
+【保证金】保证金声明金额、是否发现缴款证明、是否发现电子保函、是否发现基本账户材料、缴款证明金额、电子保函金额、保证金形式
+
+【主体信息】法定代表人（姓名）、授权代理人（姓名）、统一社会信用代码、注册地址、开户银行、银行账号
+——法定代表人、授权代理人归入此处，不放在 personnel 中
+
+──── 第二层：人员社保提取 ────
+
+每个在项目管理人员表中出现的人员，按以下字段提取：
+
+name=姓名（必须逐字从文档表格或正文中提取的真实姓名）
+role=拟任职务（项目负责人/土建负责人/安装负责人/技术负责人/园林绿化专业负责人/其他成员）
+title=职称（严格从文档提取，无则留空，不编造）
+certificate_name=证书名称（严格从文档提取，无则留空，不编造）
+certificate_level=级别（严格从文档提取，无则留空，不编造）
+certificate_numbers=证号数组（严格从文档提取，无则留空）
+specialty=专业（严格从文档提取，无则留空，不编造）
+social_security_id_masked=社保编号（严格从文档提取，脱敏后）
+labor_contract_found=是否发现劳动合同(true/false，仅文档明确提及时才填true)
+
+每一条记录必须对应文档中真实存在的人员。严禁输出任何不在原文中的人员。人员姓名必须是从表格或正文中逐字提取的真实姓名。找不到任何人员信息时，personnel 输出空数组 []。
+
+──── 第三层：扫描表格结构化 ────
+
+如果 Markdown 中有表格（| 分隔），识别其类型并输出：
+
+table_type 取值：personnel_table / pricing_table / guarantee_table / social_security_table / unknown_table
+row_count=行数
+col_count=列数
+preview=前几行内容摘要
+confidence=置信度
+note=处理建议
+
+无表格时输出空数组 []。
+
+──── 铁律 ────
+
+1. 所有值严格从文档原文提取，禁止编造
+2. 找不到信息时不要输出该字段，不要使用占位值
+3. 禁止输出示例值、模板值、占位名（如张三、李四、人员姓名、证号1）
+4. source_excerpt 必须是文档中真实存在的文本片段
+5. personnel 每个人必须真实存在于原文中，禁止虚构任何人员
 
 章节内容：{content}

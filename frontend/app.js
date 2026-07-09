@@ -305,7 +305,8 @@ async function runReview() {
       showTimer(elapsed);
       const stage = s.stage;
       const label = s.label || stage;
-      setProgress(s.progress || 0, `${label} (${formatTime(elapsed)})`);
+      const extra = s.llm_completed ? ` ${s.llm_completed}/${s.llm_total}` : "";
+      setProgress(s.progress || 0, `${label}${extra} (${formatTime(elapsed)})`);
 
       if (s.llm_errors && s.llm_errors.length > 0) {
         addLog(`LLM 提取错误: ${s.llm_errors.join("; ")}`, "LLM 错误");

@@ -20,6 +20,7 @@ class OcrResult:
     markdown: str
     page_map: dict[int, int]
     page_texts: dict[int, str] = field(default_factory=dict)
+    images: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def page_count(self) -> int:
@@ -43,7 +44,8 @@ def run_ocr(input_path: Path, backend: str = "hybrid-engine") -> OcrResult:
     except urllib.error.URLError as exc:
         raise RuntimeError(f"MinerU API 不可达: {exc}") from exc
     markdown, page_map, page_texts = _extract(result)
-    return OcrResult(markdown=markdown, page_map=page_map, page_texts=page_texts)
+    images = _extract_images(result)
+    return OcrResult(markdown=markdown, page_map=page_map, page_texts=page_texts, images=images)
 
 
 def _build_body(input_path: Path, boundary: str, backend: str = "hybrid-engine") -> bytes:
@@ -64,21 +66,34 @@ def _build_body(input_path: Path, boundary: str, backend: str = "hybrid-engine")
         b'Content-Disposition: form-data; name="return_content_list"',
         b"",
         b"true",
+        f"--{boundary}".encode(),
+        b'Content-Disposition: form-data; name="return_images"',
+        b"",
+        b"true",
         f"--{boundary}--".encode(),
     ]
     return b"\r\n".join(lines)
 
 
 def _extract(result: dict[str, Any]) -> tuple[str, dict[int, int], dict[int, str]]:
-    markdown = result.get("md") or result.get("markdown") or ""
+    markdown = (
+        result.get("md") or result.get("markdown") or ""
+    )
     pages: list[dict[str, Any]] = result.get("pages") or []
-    
-    # Debug: log response structure
-    import logging
-    log = logging.getLogger("ocr._extract")
-    log.info("MinerU response keys: %s, pages_type=%s, pages_len=%d",
-             sorted(result.keys()), type(pages).__name__, len(pages) if isinstance(pages, list) else -1)
-    
+
+    # MinerU async task response: data nested under results[filename]
+    md_content = ""
+    if not markdown and not pages:
+        results = result.get("results", {})
+        if isinstance(results, dict):
+            for fname, fdata in results.items():
+                if isinstance(fdata, dict):
+                    md_content = fdata.get("md_content") or fdata.get("md") or fdata.get("markdown") or ""
+
+    if md_content:
+        markdown = md_content
+        pages = result.get("content_list") or []
+
     page_map: dict[int, int] = {}
     page_texts: dict[int, str] = {}
     for idx, page in enumerate(pages):
@@ -106,3 +121,21 @@ def _extract(result: dict[str, Any]) -> tuple[str, dict[int, int], dict[int, str
         if lines:
             page_texts[page_num] = "\n".join(lines)
     return markdown, page_map, page_texts
+
+
+def _extract_images(result: dict[str, Any]) -> list[dict[str, Any]]:
+    images: list[dict[str, Any]] = []
+    results = result.get("results", {})
+    if isinstance(results, dict):
+        for _, fdata in results.items():
+            if isinstance(fdata, dict):
+                imgs = fdata.get("images") or []
+                for img in imgs:
+                    if isinstance(img, dict):
+                        images.append({
+                            "page": img.get("page", 0),
+                            "bbox": img.get("bbox", []),
+                            "data": img.get("image") or img.get("data") or b"",
+                            "filename": img.get("filename", ""),
+                        })
+    return images

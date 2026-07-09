@@ -58,8 +58,22 @@ async def run_review_stream(
             ocr_result = future.result()
         result_md = ocr_result.markdown
         ocr_page_texts = ocr_result.page_texts
+
+        # Save extracted images
+        if ocr_result.images:
+            img_dir = output_dir / "images"
+            img_dir.mkdir(parents=True, exist_ok=True)
+            for idx, img in enumerate(ocr_result.images):
+                try:
+                    data = img.get("data")
+                    if data and isinstance(data, bytes):
+                        fname = img.get("filename") or f"page{img.get('page',0)}_img{idx}.png"
+                        (img_dir / fname).write_bytes(data)
+                except Exception:
+                    pass
+
         yield _emit({"stage": "ocr", "label": backend_label, "status": "done",
-                     "elapsed": round(time.monotonic() - t0, 1), "pages": ocr_result.page_count,
+                     "elapsed": round(time.monotonic() - t0, 1), "pages": total_ocr_pages,
                      "page_texts_count": len(ocr_page_texts)})
 
     yield _emit({"stage": "split", "label": "Markdown 分片", "status": "active"})
@@ -78,15 +92,27 @@ async def run_review_stream(
         base_url=settings.deepseek_base_url,
         model=settings.deepseek_model,
     )
-    facts, personnel, findings, llm_errors = run_map_reduce(
+    facts, personnel, findings, llm_errors, tables = [], [], [], [], []
+    for event in run_map_reduce(
         sections, agent,
         concurrency=settings.map_reduce_concurrency,
         source_filename=input_path.name,
-    )
-    yield _emit({"stage": "llm", "label": "LLM 并行提取", "status": "done",
-                 "elapsed": round(time.monotonic() - t0, 1),
-                 "facts": len(facts), "personnel": len(personnel),
-                 "total_sections": len(sections), "errors": llm_errors})
+    ):
+        if event.get("status") == "running":
+            yield _emit({"stage": "llm", "label": "LLM 并行提取", "status": "running",
+                         "progress": event.get("progress", 42),
+                         "completed": event.get("completed", 0), "total": event.get("total", len(sections))})
+        elif event.get("status") == "done":
+            facts = event.get("facts_result", [])
+            personnel = event.get("personnel_result", [])
+            findings = event.get("findings_result", [])
+            tables = event.get("tables_result", [])
+            llm_errors = event.get("errors", [])
+            yield _emit({"stage": "llm", "label": "LLM 并行提取", "status": "done",
+                         "elapsed": round(time.monotonic() - t0, 1),
+                         "facts": event.get("facts", 0), "personnel": event.get("personnel", 0),
+                         "total_sections": len(sections), "errors": llm_errors,
+                         "tables": len(tables)})
 
     yield _emit({"stage": "consistency", "label": "一致性校验", "status": "active"})
     t0 = time.monotonic()
@@ -95,7 +121,7 @@ async def run_review_stream(
 
     yield _emit({"stage": "excel", "label": "生成 Excel", "status": "active"})
     t0 = time.monotonic()
-    review = _build_review(input_path.name, facts, personnel, findings)
+    review = _build_review(input_path.name, facts, personnel, findings, tables)
     bidder = _safe_bidder(facts, input_path)
     excel_path = output_dir / f"{bidder}投标文件三项审查_提取与判断建议.xlsx"
     render_review_workbook(review, excel_path)
@@ -120,9 +146,23 @@ def _build_review(
     facts: list[dict[str, Any]],
     personnel: list[dict[str, Any]],
     findings: list[dict[str, Any]],
+    tables: list[dict[str, Any]] | None = None,
 ) -> Any:
     from app.schemas.phase_a import EvidenceItem
     from app.schemas.review import ReviewWorkbook
+
+    _CATEGORIES = {
+        "项目名称": "基础信息", "招标人名称": "基础信息", "投标人名称": "基础信息", "投标文件日期": "基础信息",
+        "投标报价": "报价", "投标函报价": "报价", "投标函附录报价": "报价",
+        "基本费率折扣系数": "报价", "审减费率折扣系数": "报价", "增值税税率": "报价",
+        "投标有效期": "响应信息", "服务期限": "响应信息",
+        "项目负责人": "人员", "项目负责人注册编号": "人员", "项目负责人专业": "人员",
+        "保证金声明金额": "保证金", "是否发现缴款证明": "保证金", "是否发现电子保函": "保证金",
+        "是否发现基本账户材料": "保证金", "缴款证明金额": "保证金", "电子保函金额": "保证金",
+        "保证金形式": "保证金",
+        "法定代表人": "主体信息", "授权代理人": "主体信息", "统一社会信用代码": "主体信息",
+        "注册地址": "主体信息", "开户银行": "主体信息", "银行账号": "主体信息",
+    }
 
     fact_rows: list[dict[str, Any]] = []
     unavailable: list[dict[str, Any]] = []
@@ -132,9 +172,10 @@ def _build_review(
         excerpt = fact.get("source_excerpt", "")
         section = fact.get("source_section", "")
         conf = fact.get("confidence", 0.0)
+        cat = _CATEGORIES.get(fname, "通用")
         status = "已提取" if conf >= 0.5 else "需复核"
         fact_rows.append({
-            "问题编号": "N/A", "问题分类": "通用", "提取项": fname,
+            "问题编号": "N/A", "问题分类": cat, "提取项": fname,
             "提取结果": str(fvalue) if fvalue else "无法确认",
             "是否提取成功": "是" if status == "已提取" else "否",
             "信息归属判断": "当前投标文件内容", "文件名": source_file,
@@ -180,11 +221,29 @@ def _build_review(
             "级别": person.get("certificate_level") or "/",
             "证号": " / ".join(person.get("certificate_numbers", [])) or "/",
             "专业": person.get("specialty") or "/",
-            "社保状态": "已发现可关联材料" if person.get("social_security_id_masked") else "未发现或无法关联",
+            "社保状态": (
+                "已发现可关联材料" if person.get("labor_contract_found") or person.get("social_security_id_masked")
+                else "未发现或无法关联"
+            ),
             "文件名": source_file, "PDF实际页码": "/", "文件内印刷页码": "/",
             "自动行号/页面区域": person.get("source_section", "/"),
-            "备注": f"基于 LLM 从章节 {person.get('source_section', '/')} 提取。",
+            "备注": f"劳动合同: {'已发现' if person.get('labor_contract_found') else '未发现'}"
+                    f"; 社保: {'已发现' if person.get('social_security_id_masked') else '未发现'}",
         })
+
+    table_rows: list[dict[str, Any]] = []
+    if tables:
+        for t in tables:
+            table_rows.append({
+                "表格类型": t.get("table_type", "unknown"),
+                "行数": t.get("row_count", 0),
+                "列数": t.get("col_count", 0),
+                "预览": t.get("preview", "/"),
+                "置信度": t.get("confidence", 0.0),
+                "所在章节": t.get("source_section", "/"),
+                "处理建议": t.get("note", "/"),
+            })
+
     bidder = next(
         (str(f.get("value", "")) for f in facts if f.get("field_name") == "投标人名称" and f.get("value")),
         "无法确认",

@@ -4,7 +4,7 @@ import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import Any, Generator
 
 from app.pipeline.llm_agent import DeepSeekAgent
 from app.pipeline.splitter import Section
@@ -19,10 +19,15 @@ def run_map_reduce(
     agent: DeepSeekAgent,
     concurrency: int = 5,
     source_filename: str = "",
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+) -> Generator[dict[str, Any], None, tuple[list, list, list, list, list]]:
     all_facts: list[dict[str, Any]] = []
     all_personnel: list[dict[str, Any]] = []
+    all_tables: list[dict[str, Any]] = []
     errors: list[str] = []
+    total = len(sections)
+    completed = 0
+
+    yield {"status": "running", "completed": 0, "total": total, "progress": 42}
 
     with ThreadPoolExecutor(max_workers=concurrency) as executor:
         futures = {executor.submit(agent.extract, s): s for s in sections}
@@ -36,16 +41,27 @@ def run_map_reduce(
                 for person in result.get("personnel", []):
                     person["source_section"] = section.heading
                     all_personnel.append(person)
+                for table in result.get("tables", []):
+                    table["source_section"] = section.heading
+                    all_tables.append(table)
             except Exception as exc:
                 msg = f"{section.heading}: {exc}"
                 logger.error("[map_reduce] section failed: %s", msg, exc_info=True)
                 errors.append(msg)
+            completed += 1
+            if completed % 10 == 0 or completed == total:
+                pct = 42 + int((completed / max(total, 1)) * 33)
+                yield {"status": "running", "completed": completed, "total": total, "progress": pct,
+                       "facts": len(all_facts), "personnel": len(all_personnel)}
 
     merged_facts = _merge_facts(all_facts)
     merged_personnel = _merge_personnel(all_personnel)
-
     findings = _consistency_check(agent, merged_facts, merged_personnel, source_filename)
-    return merged_facts, merged_personnel, findings, errors
+    yield {"status": "done", "completed": total, "total": total, "progress": 75,
+           "facts": len(merged_facts), "personnel": len(merged_personnel),
+           "tables": len(all_tables), "errors": errors, "findings": len(findings),
+           "facts_result": merged_facts, "personnel_result": merged_personnel,
+           "findings_result": findings, "tables_result": all_tables}
 
 
 def _merge_facts(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -90,19 +106,13 @@ def _consistency_check(
         return _rule_consistency(facts, personnel)
 
 
-def _llm_consistency_check(
-    agent: DeepSeekAgent,
-    facts: list[dict[str, Any]],
-    personnel: list[dict[str, Any]],
-    source_filename: str,
-) -> list[dict[str, Any]]:
+def _llm_consistency_check(agent, facts, personnel, source_filename):
     if not _CONSISTENCY_PATH.exists():
         return _rule_consistency(facts, personnel)
     prompt = _CONSISTENCY_PATH.read_text(encoding="utf-8")
     data = json.dumps({"facts": facts, "personnel": personnel, "source_file": source_filename}, ensure_ascii=False)
     response = agent.client.chat.completions.create(
         model=agent.model,
-        response_format={"type": "json_object"},
         messages=[{"role": "user", "content": prompt + "\n\n" + data}],
         temperature=0.1,
         max_tokens=4096,
@@ -111,15 +121,11 @@ def _llm_consistency_check(
     return result.get("findings", [])
 
 
-def _rule_consistency(
-    facts: list[dict[str, Any]],
-    personnel: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
+def _rule_consistency(facts, personnel):
     findings: list[dict[str, Any]] = []
     fact_map: dict[str, list[dict[str, Any]]] = {}
     for f in facts:
         fact_map.setdefault(f.get("field_name", ""), []).append(f)
-
     quote_items = fact_map.get("投标报价", [])
     if len(quote_items) > 1:
         vals = [q.get("value", "") for q in quote_items]
@@ -130,7 +136,6 @@ def _rule_consistency(
                 "evidence": [{"excerpt": str(v)} for v in vals],
                 "category": "报价", "required_materials": [],
             })
-
     guarantee_items = fact_map.get("投标保证金金额", []) + fact_map.get("保证金金额", [])
     if len(guarantee_items) > 1:
         vals = [g.get("value", "") for g in guarantee_items]
@@ -141,7 +146,6 @@ def _rule_consistency(
                 "evidence": [{"excerpt": str(v)} for v in vals],
                 "category": "保证金", "required_materials": [],
             })
-
     if not findings:
         findings.append({
             "title": "单文件内部一致性", "result": "未发现明显异常",
