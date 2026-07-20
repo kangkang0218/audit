@@ -13,6 +13,7 @@ class Section:
     content: str
     start_page: int | None
     end_page: int | None
+    page_range: str = ""
 
     @property
     def label(self) -> str:

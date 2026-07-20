@@ -34,6 +34,7 @@ async def run_review_stream(
     if classification.pdf_class == PdfClass.TEXT:
         result_md = classification.markdown
         ocr_page_texts: dict[int, str] = {}
+        total_ocr_pages = classification.total_pages
         yield _emit({"stage": "ocr", "label": "PyMuPDF 直读 (跳过 OCR)", "status": "done",
                      "elapsed": 0.0, "pages": classification.total_pages})
     else:
@@ -59,6 +60,10 @@ async def run_review_stream(
         result_md = ocr_result.markdown
         ocr_page_texts = ocr_result.page_texts
 
+        # Inject page markers into markdown
+        if result_md and total_ocr_pages > 0:
+            result_md = _inject_page_markers(result_md, total_ocr_pages)
+
         # Save extracted images
         if ocr_result.images:
             img_dir = output_dir / "images"
@@ -82,6 +87,19 @@ async def run_review_stream(
         sections = _sections_from_pages(ocr_page_texts)
     else:
         sections = split_markdown(result_md)
+
+    # Inject page markers based on proportional character position
+    if total_ocr_pages > 0 and result_md and sections:
+        cpp = max(len(result_md) // total_ocr_pages, 1)
+        for section in sections:
+            pos = result_md.find(section.content)
+            if pos >= 0:
+                sp = pos // cpp + 1
+                ep = min((pos + len(section.content)) // cpp + 1, total_ocr_pages)
+                marker = f"<!-- page {sp}-{ep} -->\n" if ep > sp else f"<!-- page {sp} -->\n"
+                section.content = marker + section.content
+                section.page_range = f"第{sp}-{ep}页" if ep > sp else f"第{sp}页"
+
     yield _emit({"stage": "split", "label": "Markdown 分片", "status": "done",
                  "elapsed": round(time.monotonic() - t0, 2), "sections": len(sections)})
 
@@ -179,7 +197,8 @@ def _build_review(
             "提取结果": str(fvalue) if fvalue else "无法确认",
             "是否提取成功": "是" if status == "已提取" else "否",
             "信息归属判断": "当前投标文件内容", "文件名": source_file,
-            "PDF实际页码": "/", "文件内印刷页码": "/",
+            "PDF实际页码": fact.get("page_ref") or fact.get("page_range") or section or "/",
+            "文件内印刷页码": fact.get("page_ref") or fact.get("page_range") or section or "/",
             "自动行号/页面区域": section or "/",
             "原文摘录": excerpt or "/",
             "置信度": "高" if conf >= 0.85 else ("中/需复核" if conf >= 0.5 else "低"),
@@ -225,7 +244,9 @@ def _build_review(
                 "已发现可关联材料" if person.get("labor_contract_found") or person.get("social_security_id_masked")
                 else "未发现或无法关联"
             ),
-            "文件名": source_file, "PDF实际页码": "/", "文件内印刷页码": "/",
+            "文件名": source_file,
+            "PDF实际页码": person.get("page_ref", person.get("source_section", "/")),
+            "文件内印刷页码": person.get("page_ref", person.get("source_section", "/")),
             "自动行号/页面区域": person.get("source_section", "/"),
             "备注": f"劳动合同: {'已发现' if person.get('labor_contract_found') else '未发现'}"
                     f"; 社保: {'已发现' if person.get('social_security_id_masked') else '未发现'}",
@@ -287,3 +308,28 @@ def _sections_from_pages(page_texts: dict[int, str]) -> list:
         sections.append(Section(heading=heading, content=content, start_page=start_pg, end_page=end_pg))
         i += PAGES_PER_CHUNK
     return sections
+
+
+def _inject_page_markers(markdown: str, total_pages: int) -> str:
+    """Distribute <!-- page N --> markers proportionally through the markdown."""
+    if not markdown or total_pages <= 1:
+        return markdown
+    chars = len(markdown)
+    chars_per_page = max(chars // total_pages, 1)
+    lines = markdown.split("\n")
+    result: list[str] = []
+    char_count = 0
+    page = 1
+
+    # Mark every heading line with a page marker
+    heading_pattern = re.compile(r"^(#{1,3}\s+)")
+    for line in lines:
+        if heading_pattern.match(line):
+            result.append(f"<!-- page {page} -->")
+        result.append(line)
+        char_count += len(line) + 1
+        estimated_page = min(char_count // chars_per_page + 1, total_pages)
+        if estimated_page != page:
+            page = estimated_page
+            result.append(f"<!-- page {page} -->")
+    return "\n".join(result)

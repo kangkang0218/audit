@@ -37,6 +37,7 @@ def run_map_reduce(
                 result = future.result(timeout=300)
                 for fact in result.get("facts", []):
                     fact["source_section"] = section.heading
+                    fact["page_range"] = section.page_range or ""
                     all_facts.append(fact)
                 for person in result.get("personnel", []):
                     person["source_section"] = section.heading
@@ -67,7 +68,7 @@ def run_map_reduce(
 def _merge_facts(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     groups: dict[str, list[dict[str, Any]]] = {}
     for f in facts:
-        key = f.get("field_name", "")
+        key = str(f.get("field_name", ""))
         groups.setdefault(key, []).append(f)
     merged: list[dict[str, Any]] = []
     for key, items in groups.items():
@@ -83,9 +84,14 @@ def _merge_personnel(personnel: list[dict[str, Any]]) -> list[dict[str, Any]]:
     seen: set[str] = set()
     merged: list[dict[str, Any]] = []
     for p in personnel:
-        name = p.get("name", "")
-        cert_nums = tuple(sorted(p.get("certificate_numbers", [])))
-        key = f"{name}|{cert_nums}"
+        name = str(p.get("name", ""))
+        cert_nums = p.get("certificate_numbers", [])
+        if isinstance(cert_nums, str):
+            cert_nums = [cert_nums]
+        if not isinstance(cert_nums, list):
+            cert_nums = []
+        cert_tuple = tuple(sorted(str(c) for c in cert_nums))
+        key = f"{name}|{cert_tuple}"
         if key in seen:
             continue
         seen.add(key)
@@ -125,7 +131,7 @@ def _rule_consistency(facts, personnel):
     findings: list[dict[str, Any]] = []
     fact_map: dict[str, list[dict[str, Any]]] = {}
     for f in facts:
-        fact_map.setdefault(f.get("field_name", ""), []).append(f)
+        fact_map.setdefault(str(f.get("field_name", "")), []).append(f)
     quote_items = fact_map.get("投标报价", [])
     if len(quote_items) > 1:
         vals = [q.get("value", "") for q in quote_items]
